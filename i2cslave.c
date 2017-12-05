@@ -11,6 +11,7 @@
 
 #include <avr/interrupt.h>
 
+
 /* MCU dependent stuff */
 #define DDR_USI             DDRB
 #define PORT_USI            PORTB
@@ -27,7 +28,6 @@
 #define DATA_OUTPUT_COLLISION_INT_FLAG   USIDC
 
 /* states of I2C overflow interrupt */
-#define TWI_SLAVE_END_OF_START_CONDITION       (0x00)
 #define TWI_SLAVE_CHECK_ADDRESS                (0x01)
 #define TWI_SLAVE_SEND_DATA                    (0x02)
 #define TWI_SLAVE_REQUEST_REPLY_FROM_SEND_DATA (0x03)
@@ -138,17 +138,15 @@ ISR(USI_START_vect)
                 (1<<USIWM1)|(1<<USIWM0)|                            // Set USI in Two-wire mode
                 (1<<USICS1)|(0<<USICS0)|(0<<USICLK)|                // Shift Register Clock Source = External, positive edge
                 (0<<USITC);
-    if(PIN_USI & (1 << PORT_TWI_SCL)) {
-        // Clear all flags and set USI to sample 1 bit i.e. clock going down
-        USISR   =   (1<<START_CONDITION_INT_FLAG)|(1<<COUNTER_OVERFLOW_INT_FLAG)|(1<<STOP_CONDITION_INT_FLAG)|(1<<DATA_OUTPUT_COLLISION_INT_FLAG)|      // Clear flags
-                    (0xf<<USICNT0);                                    // 
-        USI_TWI_Overflow_State = TWI_SLAVE_END_OF_START_CONDITION;
-    } else {
-        // Clear all flags and set USI to sample 8 bits i.e. 16 clock edges
-        USISR   =   (1<<USISIF)|(1<<COUNTER_OVERFLOW_INT_FLAG)|(1<<STOP_CONDITION_INT_FLAG)|(1<<DATA_OUTPUT_COLLISION_INT_FLAG)|
-                    (0x0<<USICNT0);
-        USI_TWI_Overflow_State = TWI_SLAVE_CHECK_ADDRESS;
+    // this active loop is guaranteed to be very short because this interrupt draws clock to low
+    while(PIN_USI&(1<<PORT_TWI_SCL)) {
+     if(PIN_USI&(1<<PORT_TWI_SDA))
+      break;
     }
+    // clear all flags and set counter for 16 clock edges, i.e. 8 bits of data
+    USISR   =   (1<<USISIF)|(1<<COUNTER_OVERFLOW_INT_FLAG)|(1<<STOP_CONDITION_INT_FLAG)|(1<<DATA_OUTPUT_COLLISION_INT_FLAG)|
+                (0x0<<USICNT0);
+    USI_TWI_Overflow_State = TWI_SLAVE_CHECK_ADDRESS;
 }
 
 /*----------------------------------------------------------
@@ -158,12 +156,6 @@ ISR(USI_START_vect)
 ISR(USI_OVERFLOW_vect)
 {
     switch (USI_TWI_Overflow_State) {
-      // After start condition, clock is now down
-      case TWI_SLAVE_END_OF_START_CONDITION:
-        SET_TWI_TO_READ_DATA;
-        USI_TWI_Overflow_State = TWI_SLAVE_CHECK_ADDRESS;
-        break;
-
         // ---------- Address mode ----------
         // Check address and send ACK (and next USI_SLAVE_SEND_DATA) if OK, else reset USI
       case TWI_SLAVE_CHECK_ADDRESS:
